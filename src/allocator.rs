@@ -49,7 +49,6 @@ impl BlockHeader {
         self.header = (self.header & (1 << 31)) | size;
     }
    
-    // TODO: add functions for next.
     fn get_next(&self) -> Option<*mut BlockHeader> {
         self.next
     }
@@ -103,7 +102,6 @@ impl Allocator {
             smallest_block_size: smallest_block_size
         };
        
-
         // Add the initial memory block into the freelist.
         let curr_header : &mut BlockHeader = unsafe { mem::transmute(start_addr) };
         curr_header.mark_free(true);
@@ -117,9 +115,9 @@ impl Allocator {
     }
     
     // returns None on failure, Address on success
-    pub fn alloc(&self, mut size: usize) -> Option<usize> {
+    pub fn alloc(&mut self, mut size: usize) -> Option<usize> {
         // return on useless request
-        if size == 0 {
+        if size  < self.smallest_block_size {
             return None
         }
         
@@ -128,25 +126,44 @@ impl Allocator {
         let padded_size = next_power_of_two(size as u32);
 
         // get the index to begin the search
-        /*
         let mut index = self.get_freelist_index(padded_size as usize);
-        let block : Option<usize> = None;
+        let mut block : Option<usize> = None;
 
-        while( block.is_none() && index < self.free_list_size) {
-            // TODO: if free_list[index] is null, increment index
-            if(self.free_list[index]) {
+        while( block.is_none() && index < self.free_list_size as usize) {
+            if(self.free_list[index].is_none()) {
                 index = index + 1;
             } else {
                 // break the block originally if necessary and update the list
                 //take the block, break it, split it.
+                let candidate_block : &mut BlockHeader = unsafe {
+                    mem::transmute(self.free_list[index].unwrap())
+                };
+
+                self.free_list[index] = candidate_block.next;
+                
+                // see size and break up blocks if need be until we get the right
+                // fit.
+                while (candidate_block.get_size() != padded_size) {
+                    //  split block
+                    self.split_block(candidate_block); 
+                }
+
+                // TODO: Figure out how to cast candidate block. 
+                //block = Some(candidate_block as *mut BlockHeader as usize + 4); 
             }
         }
-      */
-        // find an appropriate sized block
-        None
-
+      
+        // return the appropriate sized block
+        block
     }
-    
+  
+
+    // Splits the block, add the other half to the freelists and updates both
+    // other their headers.
+    fn split_block(&self, block : &mut BlockHeader) {
+        
+        // Create a place_block_in_list fxn
+    }
 
     // takes in some size, usize and returns where which index that is in the lists...
 #[inline(always)]
