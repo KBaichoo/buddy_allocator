@@ -1,6 +1,5 @@
 /// TODO: this will be a generic allocator using a binary buddy system. 
 /// Really just acting as the storage layer for now, but will fix later - Kevin.
-/// NOTE: assumes that we don't start at 0x0
 
 use core::option;
 use core::mem;
@@ -11,21 +10,54 @@ pub struct Allocator {
     start_address : usize,
     // note: as this is a binary buddy allocator, size initalized must be a power of 2!
     size: usize, // in bytes 
-    free_list: [FreeHeader; 30],
+    free_list: [Option<*mut BlockHeader>; 31], // if it's None then it's empty
     //TODO: remove ( when I figure out how to dynamically determine FL size)
     free_list_size: u32,
     smallest_block_size: usize
 }
 
 #[derive(Copy, Clone)]
-struct FreeHeader {
-    header: u32,
-    addr:   Option<usize>,
-    next:   Option<usize>
-    // a 0 for next means NULL essentially (since the lists are kept in order in
-                   // ascending order.
+struct BlockHeader {
+    // MSB of 1 is free, 0 is allocated
+    header: u32, // The MSB is whether the block is free, the remaning 31 bits are size
+    next:   Option<*mut BlockHeader> // None means no other block in the list
 }
 
+
+impl BlockHeader {
+    fn is_free(&self) -> bool {
+        (self.header & (1 << 31)) != 0 
+    }
+
+    fn get_size(&self) -> u32 {
+        self.header & !(1 << 31) 
+    }
+
+    fn mark_free(&mut self, free : bool) {
+        if free {
+            // mark free
+            self.header = self.header | (1 << 31);
+        } else {
+            // mark allocated
+            self.header &= !(1 << 31);
+        }
+    }
+
+    fn set_size(&mut self, size : u32) {
+        assert!(size < (1 << 31)); // we wouldn't be able to use 
+                                   // the msb as a alloc bit.
+        self.header = (self.header & (1 << 31)) | size;
+    }
+   
+    // TODO: add functions for next.
+    fn get_next(&self) -> Option<*mut BlockHeader> {
+        self.next
+    }
+
+    fn set_next(&mut self, next : Option<*mut BlockHeader>) {
+        self.next = next;
+    }
+}
 
 // expects num to be a power of 2. Tells which power of two it is.
 fn power_of_two( num : usize) -> u32 {
@@ -66,17 +98,20 @@ impl Allocator {
         let mut alloc = Allocator {
             start_address: start_addr,
             size: sz,
-            free_list: [FreeHeader { header : 0, addr: None, next: None  }; 30],
+            free_list: [None; 31],
             free_list_size: num_freelists,
             smallest_block_size: smallest_block_size
         };
-        
-        // add the size of the allocator into the freelist
-        alloc.free_list[num_freelists as usize - 1] = FreeHeader {
-            header: (1 << 31) | (sz as u32),
-            addr: Some(start_addr),
-            next: None
-        };
+       
+
+        // Add the initial memory block into the freelist.
+        let curr_header : &mut BlockHeader = unsafe { mem::transmute(start_addr) };
+        curr_header.mark_free(true);
+        curr_header.set_size(sz as u32);
+        curr_header.set_next(None);
+
+        alloc.free_list[num_freelists as usize - 1] =  
+            Some(curr_header as *mut BlockHeader);
 
         alloc
     }
