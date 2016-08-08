@@ -138,7 +138,8 @@ impl Allocator {
                 let candidate_block : &mut BlockHeader = unsafe {
                     mem::transmute(self.free_list[index].unwrap())
                 };
-
+                
+                // take out of list
                 self.free_list[index] = candidate_block.next;
                 
                 // see size and break up blocks if need be until we get the right
@@ -148,8 +149,15 @@ impl Allocator {
                     self.split_block(candidate_block); 
                 }
 
+                // mark block as allocated
+                candidate_block.mark_free(false);
+
                 // TODO: Figure out how to cast candidate block. 
-                //block = Some(candidate_block as *mut BlockHeader as usize + 4); 
+                // TODO: also fix the addition! The BlockHeader is > 4 bytes!!
+                // Welll..... only if they're free will they have a blockheader...
+                // if they're taken on thre first 4 bytes are necessary :) (for header)
+                // so this is fine...
+                block = Some(candidate_block as *mut BlockHeader as usize + 4); 
             }
         }
       
@@ -160,9 +168,50 @@ impl Allocator {
 
     // Splits the block, add the other half to the freelists and updates both
     // other their headers.
-    fn split_block(&self, block : &mut BlockHeader) {
+    fn split_block(&mut self, block : &mut BlockHeader) {
+        let new_size = block.get_size() / 2;
+        let buddy_address = (block as *mut BlockHeader as usize) + new_size as usize;
+        let buddy_block : &mut BlockHeader = unsafe { mem::transmute(buddy_address) };
+        buddy_block.set_size(new_size);
+        block.set_size(new_size);
+
+        // Place in block will mark buddy as free and put in cooresponding list
+        self.place_block_in_list(buddy_block);
+    }
+
+    // Marks a block as free, and places it in it's cooresponding list
+    fn place_block_in_list(&mut self, block: &mut BlockHeader) {
+        block.mark_free(true);
+
+        let index = self.get_freelist_index(block.get_size() as usize);
         
-        // Create a place_block_in_list fxn
+        let mut current_block = self.free_list[index];
+        
+        if current_block.is_none() {
+            self.free_list[index] = Some(block as *mut BlockHeader);
+        } else {
+            // at least one block in the free list
+            let mut is_placed = false;
+            while !is_placed {
+                let curr_block = current_block.unwrap();
+
+                // if the block being placed is at a lower address, put it here
+                if curr_block > block as *mut BlockHeader {
+                    //TODO check the casting and comparision of pointers.
+                    block.next = current_block;
+                    self.free_list[index] = Some(block as *mut BlockHeader);
+                    is_placed = true;
+                } else if ((unsafe {&mut *curr_block}).next.is_none()) {
+                    // if the next is none, put it after
+                    (unsafe {&mut *curr_block}).next = 
+                        Some(block as *mut BlockHeader);
+                    is_placed = true;
+                } else {
+                    // else update the curr_block to be it's next.
+                    current_block = (unsafe{&mut *curr_block}).next; 
+                }
+            }
+        }
     }
 
     // takes in some size, usize and returns where which index that is in the lists...
@@ -170,6 +219,4 @@ impl Allocator {
     fn get_freelist_index(&self, size: usize) -> usize {
         (power_of_two(size) - power_of_two(self.smallest_block_size)) as usize
     }
-
-
 }
