@@ -214,6 +214,95 @@ impl Allocator {
         }
     }
 
+    /// This function trusts that 'addr' is actually a valid addr that was returned
+    /// from an alloc().
+    pub fn free(&mut self, addr : usize) {
+        let block_header : &mut BlockHeader = unsafe { mem::transmute(addr - mem::size_of::<u32>())};
+        
+        if(!self.coalesce(block_header)) {
+            // if we couldn't coalecse with this block being free, just add it to the
+            // freelist
+            self.place_block_in_list(block_header);
+        }
+
+    }
+
+    fn coalesce(&mut self, block: &mut BlockHeader) -> bool {
+        let buddy_block_ptr = self.get_buddy(block);
+        let mut buddy_block = unsafe { &mut *buddy_block_ptr };
+        if !buddy_block.is_free() {
+            return false
+        } 
+
+        // buddy is free! time to coalesce.
+        let my_ptr = block as *mut BlockHeader;
+        
+        // remove buddy block
+        self.remove_block_from_list(buddy_block);
+
+        // Change the header of the lowest addressed block in the set and try to
+        // coalesce some more :).
+
+        // TODO: check pointer comparision
+        if my_ptr < buddy_block_ptr {
+            // since the recently free one will have the header, change it so that
+            // it's header is marked free.
+            block.mark_free(true);
+            block.set_size(buddy_block.get_size() * 2);
+            self.place_block_in_list(block);
+        } else {
+            // change the header of the buddy block, as it comes before
+            buddy_block.set_size(block.get_size() * 2);
+            self.place_block_in_list(buddy_block);
+        }
+        // we merged.
+        true
+    }
+
+    // TODO: modify so it doesn't panic as much...
+    fn remove_block_from_list(&mut self, block: &mut BlockHeader) {
+        let index = self.get_freelist_index(block.get_size() as usize);
+        
+        let mut removed = false; // nothing remvoed yet...
+        let target = block as *mut BlockHeader;
+
+        // Note this will PANIC if the list has none here ( which is good, it should
+        // have a block here!)
+        let mut current = self.free_list[index].unwrap(); 
+        if current == target {
+            // we're replacing the first one :D
+        } else {
+            let mut previous = current;
+            while !removed {
+                current = (unsafe { &mut *current }).next.unwrap();
+                if current == target {
+                    // remove!
+                    (unsafe {&mut *previous}).next = (unsafe { &mut *current}).next;
+                    removed = true;
+                } 
+                
+                previous = current;
+            }
+        }
+    }
+
+    // Calculates the address of the 'blocks' buddy.
+    // Note the 'next' field may / maynot be valid, depending on if the buddy is
+    // free.
+    fn get_buddy(&self, block: &BlockHeader) -> *mut BlockHeader { 
+        let buddy_parity = (block as *const BlockHeader as usize - self.start_address) 
+                                / block.get_size() as usize;
+        if buddy_parity % 2 == 0 {
+            // it's the first in the set, so the buddy is after it!
+            ((block as *const BlockHeader as usize) + (block.get_size() as usize)) 
+                as *mut BlockHeader
+        } else {
+            // it's the second in the set, so it's buddy is before it~
+            ((block as *const BlockHeader as usize) - (block.get_size() as usize)) 
+                as *mut BlockHeader
+        }
+    }   
+
     // takes in some size, usize and returns where which index that is in the lists...
 #[inline(always)]
     fn get_freelist_index(&self, size: usize) -> usize {
