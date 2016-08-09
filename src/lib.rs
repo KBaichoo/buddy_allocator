@@ -1,4 +1,4 @@
-//#![crate_name = "buddy_allocator"]
+#![crate_name = "buddy_allocator"]
 //#![crate_type = "lib"]
 #![no_std]
 

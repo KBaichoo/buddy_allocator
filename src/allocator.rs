@@ -61,7 +61,7 @@ impl BlockHeader {
 // expects num to be a power of 2. Tells which power of two it is.
 fn power_of_two( num : usize) -> u32 {
     let max_pos = (mem::size_of::<usize>() * 8) - 1;
-    for i in max_pos..0 {
+    for i in (0..max_pos).rev() {
         if (1 << i) & num != 0 {
             return i as u32
         }
@@ -69,7 +69,8 @@ fn power_of_two( num : usize) -> u32 {
     assert!(false); // should never reach here
     0
 }
-    
+
+
 // Gets the next power of two (for 32 bit)
 fn next_power_of_two(mut size : u32) -> u32 {
     size = size - 1;
@@ -80,6 +81,17 @@ fn next_power_of_two(mut size : u32) -> u32 {
     size |= size >> 16;
     size = size + 1;
     size
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn power_of_twos() {
+        assert_eq!(2, super::power_of_two(4));
+        assert_eq!(16, super::power_of_two(65536));
+    }
 }
 
 
