@@ -1,5 +1,21 @@
-/// TODO: this will be a generic allocator using a binary buddy system. 
-/// Really just acting as the storage layer for now, but will fix later - Kevin.
+/// This is a memory allocator written in Rust using the binary buddy system.
+/// As this uses the binary buddy system, it must be given a size segment that 
+/// is a power of two. 
+///
+/// This memory allocator is designed to not require the std crate that's typically
+/// automatically imported in rust files. For this reason I used a freelist
+/// of a statically allocated size of 31. Thus if the minimum size block was 1 byte
+/// we'd have enough space in are freelist to store sizes up to 2^30 ( we can't have
+/// larger sizes in this implementation since the MSB in headers are used to tell
+/// whether a block of memory is free or allocated). Furthermore, because there is
+/// no std, and I can't at run time generate an array of any size (depending on the
+/// given amount of memory) I used the free_list_size variable as a comprise to track
+/// the valid number of positions in the free_list array.
+///
+/// There's a price paid of 4 bytes for block headers.
+///
+/// Author: Kevin Baichoo <kbaichoo@cs.stanford.edu>
+///
 
 use core::option;
 use core::mem;
@@ -8,11 +24,10 @@ const smallest_block : usize = 1024; // 1kb is the smallest size
 
 pub struct Allocator {
     start_address : usize,
-    // note: as this is a binary buddy allocator, size initalized must be a power of 2!
-    size: usize, // in bytes 
+    size: usize, // size the allocator is given in bytes -- this must be a power of 2. 
     free_list: [Option<*mut BlockHeader>; 31], // if it's None then it's empty
     //TODO: remove ( when I figure out how to dynamically determine FL size)
-    free_list_size: u32,
+    free_list_size: u32, // how many positions in the freelist segment is valid.
     smallest_block_size: usize
 }
 // TODO: change something back to private....
