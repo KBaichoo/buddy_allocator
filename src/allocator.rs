@@ -217,26 +217,43 @@ impl Allocator {
         
         if current_block.is_none() {
             self.free_list[index] = Some(block as *mut BlockHeader);
+            block.next = None; // make the next none since this was the first block
+                               // in the list.
         } else {
             // at least one block in the free list
             let mut is_placed = false;
+            let mut prev : Option<*mut BlockHeader> = None;
             while !is_placed {
+
                 let curr_block = current_block.unwrap();
 
                 // if the block being placed is at a lower address, put it here
                 if curr_block > block as *mut BlockHeader {
                     //TODO check the casting and comparision of pointers.
                     block.next = current_block;
-                    self.free_list[index] = Some(block as *mut BlockHeader);
+                    if curr_block == self.free_list[index].unwrap() {
+                        // simply put in the index
+                        self.free_list[index] = Some(block as *mut BlockHeader);
+                    } else {
+                        // prev should be something now... 
+                        // as this isn't the first block
+                        assert!(!prev.is_none());
+                        (unsafe { &mut *(prev.unwrap()) }).next = 
+                            Some(block as *mut BlockHeader);
+                    }
                     is_placed = true;
                 } else if (unsafe {&mut *curr_block}).next.is_none() {
                     // if the next is none, put it after
                     (unsafe {&mut *curr_block}).next = 
                         Some(block as *mut BlockHeader);
+                    block.next = None;
                     is_placed = true;
                 } else {
+                    // assert that we're not self looping.
+                    assert!(block as *mut BlockHeader != curr_block);
                     // else update the curr_block to be it's next.
-                    current_block = (unsafe{&mut *curr_block}).next; 
+                    prev = current_block; 
+                    current_block = (unsafe{&mut *curr_block}).next;
                 }
             }
         }
@@ -261,7 +278,10 @@ impl Allocator {
         let buddy_block_ptr = self.get_buddy(block);
         
         let mut buddy_block = unsafe { &mut *buddy_block_ptr };
-        if !buddy_block.is_free() {
+
+        // if the buddy block is not free, or it's not coalesced itself we can't
+        // coalesce!
+        if !buddy_block.is_free() || buddy_block.get_size() != block.get_size() {
             return false
         } 
 
@@ -269,10 +289,13 @@ impl Allocator {
         println!("Coalescing block...");
         
         let my_ptr = block as *mut BlockHeader;
+       
+        println!("My buddy is at {} and I'm at {} with size {}", buddy_block_ptr as usize, my_ptr as usize, block.get_size());
         
         // remove buddy block
         self.remove_block_from_list(buddy_block);
-
+        
+            
         // Change the header of the lowest addressed block in the set and try to
         // coalesce some more :).
 
@@ -281,6 +304,8 @@ impl Allocator {
             // since the recently free one will have the header, change it so that
             // it's header is marked free.
             //block.mark_free(true);
+
+            println!("Merging as HEAD");
             block.set_size(buddy_block.get_size() * 2);
             
             // Don't go out of bounds!
@@ -290,9 +315,10 @@ impl Allocator {
                 self.place_block_in_list(block);
             }
         } else {
+            println!("Merging with buddy as HEAD");
             // change the header of the buddy block, as it comes before
             buddy_block.set_size(block.get_size() * 2);
-            self.place_block_in_list(buddy_block);
+            
             // Don't go out of bounds!
             if buddy_block.get_size() as usize == self.size {
                 self.place_block_in_list(buddy_block);
@@ -307,7 +333,7 @@ impl Allocator {
     // TODO: modify so it doesn't panic as much...
     fn remove_block_from_list(&mut self, block: &mut BlockHeader) {
         let index = self.get_freelist_index(block.get_size() as usize);
-        println!("Removing blocksize of {} ...", block.get_size()); 
+        println!("Removing blocksize of {} @ address {} ...", block.get_size(), block as *mut BlockHeader as usize); 
         let mut removed = false; // nothing remvoed yet...
         let target = block as *mut BlockHeader;
 
@@ -321,6 +347,7 @@ impl Allocator {
             // we're replacing the first one :D
             self.free_list[index] = (unsafe { &mut *current }).next;
         } else {
+            // there's more than one!
             let mut previous = current;
             while !removed {
                 current = (unsafe { &mut *current }).next.unwrap();
@@ -329,7 +356,6 @@ impl Allocator {
                     (unsafe {&mut *previous}).next = (unsafe { &mut *current}).next;
                     removed = true;
                 } 
-                
                 previous = current;
             }
         }
@@ -375,6 +401,9 @@ impl Allocator {
                  assert_eq!(block.get_size(), (self.smallest_block_size as u32) << i);
                 
                  if !block.next.is_none() {
+                    if(!(pointer < block.next.unwrap())) {
+                        println!("Pointers are: pointer: {}, next: {}", pointer as usize, block.next.unwrap() as usize);
+                    }
                     assert!(pointer < block.next.unwrap()); // assert current pointer
                                                             // is lower-addressed.
                  } 

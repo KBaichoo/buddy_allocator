@@ -1,6 +1,7 @@
 
 extern crate buddy_allocator;
 extern crate core;
+extern crate rand;
 use core::mem;
 use buddy_allocator::allocator;
 use std::vec;
@@ -22,6 +23,7 @@ fn cs107() {
 
 
 }
+
 
 // uses the entire memory location
 #[test]
@@ -54,6 +56,39 @@ fn full_load() {
     }
 }
 
+#[test]
+fn small_blocks() {
+    // allocs the whole memory in small blocks...
+    let memory : [u8; 65536] = [0; 65536];
+    let mut myAllocator = allocator::Allocator::new(
+        unsafe { mem::transmute(&memory[0]) }, 16384, 512);
+    let mut address_vec : Vec<usize> = Vec::new();
+    let mut size_left = 16384;
+    
+    let start_address : usize = unsafe { mem::transmute(&memory[0])};
+
+    println!("Allocating Blocks.... starting at address {}",  start_address);
+
+    while size_left > 0 {
+        address_vec.push(alloc_and_test(&mut myAllocator, 508, false).unwrap());
+        size_left -= 512;
+    }
+    
+    println!("Freeing blocks..."); 
+
+    while !address_vec.is_empty() {
+        let index = (address_vec.len() as f64 * rand::random::<f64>()) as usize;
+        let address = address_vec.remove(index);
+        println!("Removing block at address {}", address);
+        free_and_test(&mut myAllocator, address);
+    }
+
+    alloc_and_test(&mut myAllocator, 14201, false); // the entire segement should be
+                                                    // consolidated now, so this should
+                                                    // work!
+
+}
+
 
 
 fn free_and_test(allocator: &mut allocator::Allocator, address: usize) {
@@ -79,13 +114,6 @@ fn alloc_and_test(allocator: &mut buddy_allocator::allocator::Allocator, size : 
         assert_eq!(block.get_size(), buddy_allocator::allocator::next_power_of_two((size + 4) as u32));
 
         assert!(!block.is_free());
-        
-        //allocator.free(results.unwrap());
-        //assert!(block.is_free());
-        //println!("alloc_test_done");
-        //allocator.alloc(size);
-        //println!("Is the block free? {}", block.is_free());
-        //free_and_test(allocator, results.unwrap());
     }
     results
 }
