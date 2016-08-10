@@ -15,9 +15,9 @@ pub struct Allocator {
     free_list_size: u32,
     smallest_block_size: usize
 }
-
+// TODO: change something back to private....
 #[derive(Copy, Clone)]
-struct BlockHeader {
+pub struct BlockHeader {
     // MSB of 1 is free, 0 is allocated
     header: u32, // The MSB is whether the block is free, the remaning 31 bits are size
     next:   Option<*mut BlockHeader> // None means no other block in the list
@@ -25,11 +25,11 @@ struct BlockHeader {
 
 
 impl BlockHeader {
-    fn is_free(&self) -> bool {
+    pub fn is_free(&self) -> bool {
         (self.header & (1 << 31)) != 0 
     }
 
-    fn get_size(&self) -> u32 {
+    pub fn get_size(&self) -> u32 {
         self.header & !(1 << 31) 
     }
 
@@ -72,7 +72,7 @@ fn power_of_two( num : usize) -> u32 {
 
 
 // Gets the next power of two (for 32 bit)
-fn next_power_of_two(mut size : u32) -> u32 {
+pub fn next_power_of_two(mut size : u32) -> u32 {
     size = size - 1;
     size |= size >> 1;
     size |= size >> 2;
@@ -88,9 +88,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn power_of_twos() {
+    fn correct_power_of_twos() {
         assert_eq!(2, super::power_of_two(4));
         assert_eq!(16, super::power_of_two(65536));
+    }
+
+    #[test]
+    #[should_panic]
+    fn incorrect_power_of_two() {
+        assert_eq!(0, super::power_of_two(0));
+    }
+
+    #[test]
+    fn next_power_of_two_test() {
+        assert_eq!(4, super::next_power_of_two(3)); // non-power of two
+        assert_eq!(2, super::next_power_of_two(2)); // power of two (shouldn't change)
+        assert_eq!((1 << 31), super::next_power_of_two((1 << 30) + 1));
     }
 }
 
@@ -129,20 +142,22 @@ impl Allocator {
     // returns None on failure, Address on success
     pub fn alloc(&mut self, mut size: usize) -> Option<usize> {
         // return on useless request
-        if size  < self.smallest_block_size {
+
+        //TODO: thing whether we want smallest_block_size to be smallest content wise or smallest content + header...
+        if size + 4 < self.smallest_block_size {
             return None
         }
         
         // pad sizing...
         size += mem::size_of::<u32>(); // add header size
         let padded_size = next_power_of_two(size as u32);
-
+        println!("Looking for size {}", padded_size);
         // get the index to begin the search
         let mut index = self.get_freelist_index(padded_size as usize);
         let mut block : Option<usize> = None;
 
-        while( block.is_none() && index < self.free_list_size as usize) {
-            if(self.free_list[index].is_none()) {
+        while block.is_none() && index < self.free_list_size as usize {
+            if self.free_list[index].is_none() {
                 index = index + 1;
             } else {
                 // break the block originally if necessary and update the list
@@ -156,7 +171,7 @@ impl Allocator {
                 
                 // see size and break up blocks if need be until we get the right
                 // fit.
-                while (candidate_block.get_size() != padded_size) {
+                while candidate_block.get_size() != padded_size {
                     //  split block
                     self.split_block(candidate_block); 
                 }
@@ -191,10 +206,11 @@ impl Allocator {
         self.place_block_in_list(buddy_block);
     }
 
-    // Marks a block as free, and places it in it's cooresponding list
+    // Takes a marked free block and places it in it's cooresponding list
     fn place_block_in_list(&mut self, block: &mut BlockHeader) {
+        // This needs to mark it free.... but that's a little jank... as wouldn't it
+        // already be free if it's in free list?
         block.mark_free(true);
-
         let index = self.get_freelist_index(block.get_size() as usize);
         
         let mut current_block = self.free_list[index];
@@ -213,7 +229,7 @@ impl Allocator {
                     block.next = current_block;
                     self.free_list[index] = Some(block as *mut BlockHeader);
                     is_placed = true;
-                } else if ((unsafe {&mut *curr_block}).next.is_none()) {
+                } else if (unsafe {&mut *curr_block}).next.is_none() {
                     // if the next is none, put it after
                     (unsafe {&mut *curr_block}).next = 
                         Some(block as *mut BlockHeader);
@@ -229,9 +245,11 @@ impl Allocator {
     /// This function trusts that 'addr' is actually a valid addr that was returned
     /// from an alloc().
     pub fn free(&mut self, addr : usize) {
-        let block_header : &mut BlockHeader = unsafe { mem::transmute(addr - mem::size_of::<u32>())};
+        // assert that address is in allocator space! Can't free things I don't have!
         
-        if(!self.coalesce(block_header)) {
+        let block_header : &mut BlockHeader = unsafe { mem::transmute(addr - mem::size_of::<u32>())};
+        block_header.mark_free(true); 
+        if !self.coalesce(block_header) {
             // if we couldn't coalecse with this block being free, just add it to the
             // freelist
             self.place_block_in_list(block_header);
@@ -241,12 +259,15 @@ impl Allocator {
 
     fn coalesce(&mut self, block: &mut BlockHeader) -> bool {
         let buddy_block_ptr = self.get_buddy(block);
+        
         let mut buddy_block = unsafe { &mut *buddy_block_ptr };
         if !buddy_block.is_free() {
             return false
         } 
 
         // buddy is free! time to coalesce.
+        println!("Coalescing block...");
+        
         let my_ptr = block as *mut BlockHeader;
         
         // remove buddy block
@@ -259,13 +280,25 @@ impl Allocator {
         if my_ptr < buddy_block_ptr {
             // since the recently free one will have the header, change it so that
             // it's header is marked free.
-            block.mark_free(true);
+            //block.mark_free(true);
             block.set_size(buddy_block.get_size() * 2);
-            self.place_block_in_list(block);
+            
+            // Don't go out of bounds!
+            if block.get_size() as usize == self.size {
+                self.place_block_in_list(block);
+            } else if !self.coalesce(block) {
+                self.place_block_in_list(block);
+            }
         } else {
             // change the header of the buddy block, as it comes before
             buddy_block.set_size(block.get_size() * 2);
             self.place_block_in_list(buddy_block);
+            // Don't go out of bounds!
+            if buddy_block.get_size() as usize == self.size {
+                self.place_block_in_list(buddy_block);
+            } else if !self.coalesce(buddy_block) {
+                self.place_block_in_list(buddy_block);
+            }
         }
         // we merged.
         true
@@ -274,15 +307,19 @@ impl Allocator {
     // TODO: modify so it doesn't panic as much...
     fn remove_block_from_list(&mut self, block: &mut BlockHeader) {
         let index = self.get_freelist_index(block.get_size() as usize);
-        
+        println!("Removing blocksize of {} ...", block.get_size()); 
         let mut removed = false; // nothing remvoed yet...
         let target = block as *mut BlockHeader;
 
         // Note this will PANIC if the list has none here ( which is good, it should
         // have a block here!)
+        if self.free_list[index].is_none() {
+            panic!("No Blocks in Freelists! But at least one was expected!");
+        }
         let mut current = self.free_list[index].unwrap(); 
         if current == target {
             // we're replacing the first one :D
+            self.free_list[index] = (unsafe { &mut *current }).next;
         } else {
             let mut previous = current;
             while !removed {
@@ -319,5 +356,30 @@ impl Allocator {
 #[inline(always)]
     fn get_freelist_index(&self, size: usize) -> usize {
         (power_of_two(size) - power_of_two(self.smallest_block_size)) as usize
+    }
+
+// Verifies that the linked list structure is correctly ordered (i.e. lowest address
+// first, only free blocks in the list, and that the sizes are correct).
+//#[cfg(test)]
+    pub fn verify_lists(&self) {
+        for i in 0..(self.free_list_size as usize) {
+            let mut current_entry = self.free_list[i];
+            while !current_entry.is_none() {
+                 let pointer = current_entry.unwrap();
+                 let block : &mut BlockHeader = unsafe {
+                    mem::transmute(pointer)
+                 };
+
+                 // assert block is free and it's size is correct.
+                 assert!(block.is_free());
+                 assert_eq!(block.get_size(), (self.smallest_block_size as u32) << i);
+                
+                 if !block.next.is_none() {
+                    assert!(pointer < block.next.unwrap()); // assert current pointer
+                                                            // is lower-addressed.
+                 } 
+                 current_entry = block.next; // try next entry;
+            }
+        }
     }
 }

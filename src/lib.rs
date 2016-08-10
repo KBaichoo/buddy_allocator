@@ -1,8 +1,9 @@
 #![crate_name = "buddy_allocator"]
 //#![crate_type = "lib"]
-#![no_std]
+// TODO: uncomment and remvoe all printlns
+//#![no_std]
 
-//extern crate core;
+extern crate core;
 
 pub mod allocator;
 
