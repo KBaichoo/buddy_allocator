@@ -39,11 +39,10 @@
 ///
 /// Author: Kevin Baichoo <kbaichoo@cs.stanford.edu>
 ///
-/// TODO: remove printlns, explain buddy parity a bit...
+/// TODO: remove printlns
 
 use core::option;
 use core::mem;
-
 
 pub struct Allocator {
     start_address : usize,
@@ -132,29 +131,6 @@ fn next_power_of_two(mut size : u32) -> u32 {
     size
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn correct_power_of_twos() {
-        assert_eq!(2, super::power_of_two(4));
-        assert_eq!(16, super::power_of_two(65536));
-    }
-
-    #[test]
-    #[should_panic]
-    fn incorrect_power_of_two() {
-        assert_eq!(0, super::power_of_two(0));
-    }
-
-    #[test]
-    fn next_power_of_two_test() {
-        assert_eq!(4, super::next_power_of_two(3)); // non-power of two
-        assert_eq!(2, super::next_power_of_two(2)); // power of two (shouldn't change)
-        assert_eq!((1 << 31), super::next_power_of_two((1 << 30) + 1));
-    }
-}
 
 
 impl Allocator {
@@ -284,7 +260,7 @@ impl Allocator {
                 if curr_block > block as *mut BlockHeader {
                     block.next = current_block;
                     if curr_block == self.free_list[index].unwrap() {
-                        // simply put in the index
+                        // simply prepend to the list. 
                         self.free_list[index] = Some(block as *mut BlockHeader);
                     } else {
                         // prev should be something now as this isn't the first block
@@ -302,8 +278,7 @@ impl Allocator {
                     // assert that we're not self looping.
                     assert!(block as *mut BlockHeader != curr_block);
                     
-                    // update the curr_block and continue trying to place the
-                    // block.
+                    // update curr_block and continue trying to place the block.
                     prev = current_block; 
                     current_block = (unsafe{&mut *curr_block}).next;
                 }
@@ -314,23 +289,22 @@ impl Allocator {
     /// This function trusts that 'addr' is actually a valid addr that was returned
     /// from an alloc().
     pub fn free(&mut self, addr : usize) {
-        // assert that address is in allocator space! Can't free things I don't have!
+        // assert that address is in the allocators space!
         assert!(addr >= self.start_address && addr < self.start_address + self.size);
-
-        let block_header : &mut BlockHeader = unsafe { mem::transmute(addr - mem::size_of::<u32>())};
+        let block_header : &mut BlockHeader = unsafe { 
+                mem::transmute(addr - mem::size_of::<u32>())
+        };
         block_header.mark_free(true); 
         
         if !self.coalesce(block_header) {
-            // if we couldn't coalecse with this block being free, just add it to the
-            // freelist
+            // if we couldn't coalecse just add the block to the freelist
             self.place_block_in_list(block_header);
         }
-
     }
 
-    /// Tries to Coalesce 'block' with it's buddy block to form the orignal block
-    /// that they split from. The buddy block is a very specific block (not any
-    /// abitarary block of the same size.)
+    // Tries to Coalesce 'block' with it's buddy block to form the orignal block
+    // that they split from. The buddy block is a very specific block (not any
+    // abitarary block of the same size.) See get_buddy for more information.
     fn coalesce(&mut self, block: &mut BlockHeader) -> bool {
         let buddy_block_ptr = self.get_buddy(block);
         
@@ -342,7 +316,7 @@ impl Allocator {
             return false
         } 
 
-        // buddy is free! time to coalesce.
+        // buddy is ready to coalesce!
         println!("Coalescing block...");
         
         let my_ptr = block as *mut BlockHeader;
@@ -352,7 +326,6 @@ impl Allocator {
         // remove buddy block
         self.remove_block_from_list(buddy_block);
         
-            
         // Change the header of the lowest addressed block in the set and try to
         // coalesce some more :).
         if my_ptr < buddy_block_ptr {
@@ -363,7 +336,7 @@ impl Allocator {
             println!("Merging as HEAD");
             block.set_size(buddy_block.get_size() * 2);
             
-            // Don't go out of bounds!
+            // Don't go out of bounds if we've full coalesce back to the original block.
             if block.get_size() as usize == self.size {
                 self.place_block_in_list(block);
             } else if !self.coalesce(block) {
@@ -385,24 +358,22 @@ impl Allocator {
         true
     }
 
-    // TODO: modify so it doesn't panic as much...
+    // Removes 'block' from it's free_list.
     fn remove_block_from_list(&mut self, block: &mut BlockHeader) {
         let index = self.get_freelist_index(block.get_size() as usize);
         println!("Removing blocksize of {} @ address {} ...", block.get_size(), block as *mut BlockHeader as usize); 
-        let mut removed = false; // nothing remvoed yet...
+        let mut removed = false; // nothing removed yet...
         let target = block as *mut BlockHeader;
 
-        // Note this will PANIC if the list has none here ( which is good, it should
-        // have a block here!)
-        if self.free_list[index].is_none() {
-            panic!("No Blocks in Freelists! But at least one was expected!");
-        }
+        // Assert that there's at least one block in the free_list. There should be
+        // if we're going to remove a block from that index.
+        assert!(!self.free_list[index].is_none());
+        
         let mut current = self.free_list[index].unwrap(); 
         if current == target {
-            // we're replacing the first one :D
+            // Removing the first block in the list.
             self.free_list[index] = (unsafe { &mut *current }).next;
         } else {
-            // there's more than one!
             let mut previous = current;
             while !removed {
                 current = (unsafe { &mut *current }).next.unwrap();
@@ -417,8 +388,9 @@ impl Allocator {
     }
 
     // Calculates the address of the 'blocks' buddy.
-    // Note the 'next' field may / maynot be valid, depending on if the buddy is
-    // free.
+    // The buddy of a block with size s at address x is either at s + x or s - x.
+    // Because buddies come in pairs, we can use the parity of the block (whether it's
+    // even or odd) to identity which block it is and then find it's buddy.
     fn get_buddy(&self, block: &BlockHeader) -> *mut BlockHeader { 
         let buddy_parity = (block as *const BlockHeader as usize - self.start_address) 
                                 / block.get_size() as usize;
@@ -433,7 +405,7 @@ impl Allocator {
         }
     }   
 
-    // takes in some size, usize and returns where which index that is in the lists...
+    // Returns the index in the free_list for the given 'size'.
 #[inline(always)]
     fn get_freelist_index(&self, size: usize) -> usize {
         (power_of_two(size) - power_of_two(self.smallest_block_size)) as usize
@@ -465,5 +437,30 @@ impl Allocator {
                  current_entry = block.next; // try next entry;
             }
         }
+    }
+}
+
+// Tests below.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn correct_power_of_twos() {
+        assert_eq!(2, super::power_of_two(4));
+        assert_eq!(16, super::power_of_two(65536));
+    }
+
+    #[test]
+    #[should_panic]
+    fn incorrect_power_of_two() {
+        assert_eq!(0, super::power_of_two(0));
+    }
+
+    #[test]
+    fn next_power_of_two_test() {
+        assert_eq!(4, super::next_power_of_two(3)); // non-power of two
+        assert_eq!(2, super::next_power_of_two(2)); // power of two (shouldn't change)
+        assert_eq!((1 << 31), super::next_power_of_two((1 << 30) + 1));
     }
 }
