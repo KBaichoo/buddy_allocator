@@ -3,5 +3,5 @@ name = "buddy_allocator"
 version = "0.1.0"
 authors = ["kbaichoo <Kevin Baichoo>"]
 
-[dependencies]
+[dev-dependencies]
 rand = "*"
