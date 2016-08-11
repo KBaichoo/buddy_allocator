@@ -39,7 +39,6 @@
 ///
 /// Author: Kevin Baichoo <kbaichoo@cs.stanford.edu>
 ///
-/// TODO: remove printlns
 
 use core::option;
 use core::mem;
@@ -152,7 +151,7 @@ impl Allocator {
             size: sz,
             free_list: [None; 31],
             free_list_size: num_freelists,
-            smallest_block_size: smallest_block_size - mem::size_of::<u32>()
+            smallest_block_size: smallest_block_size
         };
        
         // Add the initial memory block into the freelist.
@@ -176,14 +175,13 @@ impl Allocator {
     pub fn alloc(&mut self, mut size: usize) -> Option<usize> {
         
         // return on useless request
-        if size < self.smallest_block_size {
+        if size + mem::size_of::<u32>() < self.smallest_block_size {
             return None
         }
         
         // Add header size and pad size
         size += mem::size_of::<u32>();
         let padded_size = next_power_of_two(size as u32);
-        println!("Looking for size {}", padded_size);
         
         // get the index to begin the search
         let mut index = self.get_freelist_index(padded_size as usize);
@@ -228,6 +226,7 @@ impl Allocator {
         let buddy_address = (block as *mut BlockHeader as usize) + new_size as usize;
         let buddy_block : &mut BlockHeader = unsafe { mem::transmute(buddy_address) };
         buddy_block.set_size(new_size);
+        buddy_block.mark_free(true);
         block.set_size(new_size);
 
         // Place in block will mark buddy as free and put in cooresponding list
@@ -236,9 +235,6 @@ impl Allocator {
 
     // Takes a marked free block and places it in it's cooresponding list
     fn place_block_in_list(&mut self, block: &mut BlockHeader) {
-        // This needs to mark it free.... but that's a little jank... as wouldn't it
-        // already be free if it's in free list / if I just freed it. 
-        block.mark_free(true); // TODO: probably remove this
         let index = self.get_freelist_index(block.get_size() as usize);
         
         let mut current_block = self.free_list[index];
@@ -317,11 +313,9 @@ impl Allocator {
         } 
 
         // buddy is ready to coalesce!
-        println!("Coalescing block...");
         
         let my_ptr = block as *mut BlockHeader;
        
-        println!("My buddy is at {} and I'm at {} with size {}", buddy_block_ptr as usize, my_ptr as usize, block.get_size());
         
         // remove buddy block
         self.remove_block_from_list(buddy_block);
@@ -329,11 +323,6 @@ impl Allocator {
         // Change the header of the lowest addressed block in the set and try to
         // coalesce some more :).
         if my_ptr < buddy_block_ptr {
-            // since the recently free one will have the header, change it so that
-            // it's header is marked free.
-            //block.mark_free(true);
-
-            println!("Merging as HEAD");
             block.set_size(buddy_block.get_size() * 2);
             
             // Don't go out of bounds if we've full coalesce back to the original block.
@@ -343,7 +332,6 @@ impl Allocator {
                 self.place_block_in_list(block);
             }
         } else {
-            println!("Merging with buddy as HEAD");
             // change the header of the buddy block, as it comes before
             buddy_block.set_size(block.get_size() * 2);
             
@@ -361,7 +349,6 @@ impl Allocator {
     // Removes 'block' from it's free_list.
     fn remove_block_from_list(&mut self, block: &mut BlockHeader) {
         let index = self.get_freelist_index(block.get_size() as usize);
-        println!("Removing blocksize of {} @ address {} ...", block.get_size(), block as *mut BlockHeader as usize); 
         let mut removed = false; // nothing removed yet...
         let target = block as *mut BlockHeader;
 
@@ -428,9 +415,6 @@ impl Allocator {
                  assert_eq!(block.get_size(), (self.smallest_block_size as u32) << i);
                 
                  if !block.next.is_none() {
-                    if(!(pointer < block.next.unwrap())) {
-                        println!("Pointers are: pointer: {}, next: {}", pointer as usize, block.next.unwrap() as usize);
-                    }
                     assert!(pointer < block.next.unwrap()); // assert current pointer
                                                             // is lower-addressed.
                  } 
@@ -443,7 +427,13 @@ impl Allocator {
 // Tests below.
 #[cfg(test)]
 mod tests {
+    extern crate std;
+    extern crate core;
+    extern crate rand;
+    
     use super::*;
+    use core::mem;
+    use std::vec;
 
     #[test]
     fn correct_power_of_twos() {
@@ -462,5 +452,116 @@ mod tests {
         assert_eq!(4, super::next_power_of_two(3)); // non-power of two
         assert_eq!(2, super::next_power_of_two(2)); // power of two (shouldn't change)
         assert_eq!((1 << 31), super::next_power_of_two((1 << 30) + 1));
+    }
+    
+    // An ode to CS107's Heap Allocator.
+#[test]
+    fn cs107() {
+        let memory : [u8; 65536] = [0; 65536];
+        let mut myAllocator = Allocator::new(
+            unsafe { mem::transmute(&memory[0]) }, 4096, 1024);
+        
+        alloc_and_test(&mut myAllocator, 420, true); // should fail ( block size too small)
+        alloc_and_test(&mut myAllocator, 4200, true); // should fail ( block size too large)
+        
+        alloc_and_test(&mut myAllocator, 2036, false);
+        alloc_and_test(&mut myAllocator, 2036, false);
+        alloc_and_test(&mut myAllocator, 2036, true); // should fail now (no space left)
+
+
+    }
+
+
+    // uses the entire memory location
+#[test]
+    fn full_load() {
+        let memory : [u8; 65536] = [0; 65536];
+        let mut myAllocator = super::Allocator::new(
+            unsafe { mem::transmute(&memory[0]) }, 16384, 1024);
+        let mut address_vec : Vec<usize> = Vec::new();
+        let mut curr_req_size = 1024;
+        
+        println!("Allocating memory...");
+        while curr_req_size < 16384 {
+            println!("Allocating chunk of size {}", curr_req_size);
+            address_vec.push(alloc_and_test(&mut myAllocator, curr_req_size - 4, false).unwrap());
+            curr_req_size = curr_req_size << 1;
+        }
+
+        // make an extra 1024 request
+        address_vec.push(alloc_and_test(&mut myAllocator, 1020, false).unwrap());
+        
+        // this should fail as all the memroy should be taken...
+        alloc_and_test(&mut myAllocator, 1024, true);
+        address_vec.reverse();
+
+        println!("Freeing memory");
+
+        // free all starting from the back.
+        for addr in address_vec {
+            free_and_test(&mut myAllocator, addr);
+        }
+    }
+
+#[test]
+    fn small_blocks() {
+        // allocs the whole memory in small blocks...
+        let memory : [u8; 65536] = [0; 65536];
+        let mut myAllocator = Allocator::new(
+            unsafe { mem::transmute(&memory[0]) }, 16384, 512);
+        let mut address_vec : Vec<usize> = Vec::new();
+        let mut size_left = 16384;
+        
+        let start_address : usize = unsafe { mem::transmute(&memory[0])};
+
+        println!("Allocating Blocks.... starting at address {}",  start_address);
+
+        while size_left > 0 {
+            address_vec.push(alloc_and_test(&mut myAllocator, 508, false).unwrap());
+            size_left -= 512;
+        }
+        
+        println!("Freeing blocks..."); 
+
+        while !address_vec.is_empty() {
+            let index = (address_vec.len() as f64 * rand::random::<f64>()) as usize;
+            let address = address_vec.remove(index);
+            println!("Removing block at address {}", address);
+            free_and_test(&mut myAllocator, address);
+        }
+
+        alloc_and_test(&mut myAllocator, 14201, false); // the entire segement should be
+                                                        // consolidated now, so this should
+                                                        // work!
+
+    }
+
+
+
+    fn free_and_test(allocator: &mut Allocator, address: usize) {
+        allocator.free(address);
+        allocator.verify_lists();
+        let block : &mut super::BlockHeader = unsafe { 
+                mem::transmute(address - 4) 
+        };
+        assert!(block.is_free());
+    }
+
+    fn alloc_and_test(allocator: &mut Allocator, size : usize, 
+        expected_fail : bool) -> Option<usize> {
+        let results = allocator.alloc(size);
+        allocator.verify_lists();
+        if(expected_fail) {
+            assert!(results.is_none());
+        } else {
+            // verify size and that it's not marked as free.
+            let block : &mut super::BlockHeader = unsafe { 
+                    mem::transmute(results.unwrap() - 4) 
+            };
+            assert_eq!(block.get_size(), super::next_power_of_two((size + 4) as u32));
+
+            assert!(!block.is_free());
+        }
+        results
     }
 }
