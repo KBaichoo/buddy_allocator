@@ -478,7 +478,7 @@ mod tests {
         let memory : [u8; 65536] = [0; 65536];
         let mut myAllocator = super::Allocator::new(
             unsafe { mem::transmute(&memory[0]) }, 16384, 1024);
-        let mut address_vec : Vec<usize> = Vec::new();
+        let mut address_vec : vec::Vec<usize> =  vec::Vec::new();
         let mut curr_req_size = 1024;
         
         println!("Allocating memory...");
@@ -509,7 +509,7 @@ mod tests {
         let memory : [u8; 65536] = [0; 65536];
         let mut myAllocator = Allocator::new(
             unsafe { mem::transmute(&memory[0]) }, 16384, 512);
-        let mut address_vec : Vec<usize> = Vec::new();
+        let mut address_vec : vec::Vec<usize> = vec::Vec::new();
         let mut size_left = 16384;
         
         let start_address : usize = unsafe { mem::transmute(&memory[0])};
